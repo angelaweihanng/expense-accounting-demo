@@ -261,11 +261,14 @@ newBtn.addEventListener('click', () => {
 
 async function loadHistory() {
   historyStatus.textContent = 'Loading…';
-  const url = `https://script.google.com/macros/s/${GAS_ENDPOINT}/exec` +
+  const target = `https://script.google.com/macros/s/${GAS_ENDPOINT}/exec` +
     `?action=history&sheetId=${encodeURIComponent(SHEET_ID)}&name=${encodeURIComponent(CURRENT_USER)}`;
 
+  // Proxy through Netlify to bypass CORS
+  const proxyUrl = `/.netlify/functions/proxy?url=${encodeURIComponent(target)}`;
+
   try {
-    const res = await fetch(url); // GET with JSON response; server sends CORS headers
+    const res = await fetch(proxyUrl);
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || 'Failed to load history');
     renderHistoryTable(data.headers, data.rows);
@@ -275,6 +278,7 @@ async function loadHistory() {
     console.error(err);
   }
 }
+
 
 function renderHistoryTable(headers, rows) {
   const thead = historyTable.querySelector('thead');
