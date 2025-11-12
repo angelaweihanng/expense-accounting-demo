@@ -192,15 +192,29 @@ form.addEventListener('submit', async (e) => {
   };
 
   try {
-    const res = await fetch(`https://script.google.com/macros/s/${GAS_ENDPOINT}/exec`, {
-      method: 'POST',
-      body: JSON.stringify(payload) // no 'Content-Type' header on purpose (simple request)
+    const url = `https://script.google.com/macros/s/${GAS_ENDPOINT}/exec`;
+  
+    // Send as URL-encoded form to avoid preflight
+    const body = new URLSearchParams({
+      payload: JSON.stringify(payload)
     });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.ok) throw new Error(data.error || 'Submit failed');
+  
+    const res = await fetch(url, {
+      method: 'POST',
+      body // <— NO headers on purpose (simple request, no preflight)
+    });
+  
+    // Apps Script returns text; try to parse
+    const text = await res.text();
+    let data = {};
+    try { data = JSON.parse(text); } catch { /* leave as {} */ }
+  
+    if (!res.ok || !data.ok) {
+      throw new Error((data && data.error) || `HTTP ${res.status}: ${text.slice(0,200)}`);
+    }
+  
     alert('Submitted!');
     form.reset();
-    // Reset a few helpful defaults
     submissionDate.value = new Date().toISOString().slice(0,10);
     expenseDate.value = submissionDate.value;
     currencyEl.value = 'SGD';
@@ -208,4 +222,5 @@ form.addEventListener('submit', async (e) => {
   } catch (err) {
     alert('Error: ' + err.message);
   }
+  
 });
