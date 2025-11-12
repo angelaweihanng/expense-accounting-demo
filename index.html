@@ -1,95 +1,13 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-<head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Expense Account Demo</title>
-<link rel="stylesheet" href="./styles.css"/>
-<script type="module" src="./app.js"></script>
-</head>
-<body>
-  <div class="card">
-    <div class="header">
-      <div class="logo"></div>
-      <div class="title">
-        <h1>Expense Account Demo</h1>
-        <p class="kicker">Submit and log expenses to Google Sheets</p>
-      </div>
-      <div style="margin-left:auto" id="userBadge" class="badge hidden"></div>
-    </div>
-
-    <div class="content" id="authView">
-      <div class="grid">
-        <div class="col-6">
-          <h2>Sign in</h2>
-          <p class="kicker">Use the test accounts provided.</p>
-          <label>Username</label>
-          <input id="username" placeholder="test_user_1" autocomplete="username"/>
-          <label style="margin-top:10px">Password</label>
-          <input id="password" type="password" placeholder="••••••••" autocomplete="current-password"/>
-          <div style="margin-top:16px"><button id="loginBtn">Sign in</button></div>
-          <p class="kicker" style="margin-top:8px">Users: test_user_1..4 / Passwords: test_password_1..4</p>
-        </div>
-      </div>
-    </div>
-
-    <div class="content hidden" id="formView">
-      <form id="expenseForm" class="grid">
-        <div class="col-4">
-          <label>Submission Date</label>
-          <input id="submissionDate" type="date" required/>
-        </div>
-        <div class="col-4">
-          <label>Expense Date</label>
-          <input id="expenseDate" type="date" required/>
-        </div>
-        <div class="col-4">
-          <label>Name</label>
-          <input id="name" type="text" readonly/>
-        </div>
-
-        <div class="col-6">
-          <label>Category</label>
-          <select id="category" required></select>
-        </div>
-        <div class="col-6">
-          <label>Item</label>
-          <input id="item" placeholder="e.g., Taxi from airport" required/>
-        </div>
-
-        <div class="col-3">
-          <label>Receipt No.</label>
-          <input id="receipt" placeholder="e.g., R12345" />
-        </div>
-        <div class="col-3">
-          <label>Expense Amount</label>
-          <input id="amount" type="number" step="0.01" min="0" required/>
-        </div>
-        <div class="col-3">
-          <label>Expense Currency</label>
-          <select id="currency" required></select>
-        </div>
-        <div class="col-3">
-          <label>Expense in SGD</label>
-          <input id="amountSGD" type="number" step="0.01" min="0" readonly/>
-        </div>
-
-        <div class="col-12">
-          <label>Remarks</label>
-          <textarea id="remarks" placeholder="Add any notes here…"></textarea>
-        </div>
-
-        <div class="col-12 row" style="justify-content:space-between;margin-top:8px">
-          <div class="kicker" id="rateInfo">Rate source: <span>Loading…</span></div>
-          <button type="submit">Submit to Sheet</button>
-        </div>
-      </form>
-    </div>
-
-    <div class="footer">
-      <div>Expense Account Demo</div>
-      <div>© <span id="y"></span></div>
-    </div>
-  </div>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Expense Account Demo</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
 </html>
