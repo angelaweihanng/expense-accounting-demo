@@ -262,60 +262,142 @@ newBtn.addEventListener('click', () => {
 async function loadHistory() {
   historyStatus.textContent = 'Loading…';
 
-  // SQL-like query: filter by Name (Col3) and sort by Submission Date (Col1) desc
-  const tq = `select * where Col3='${CURRENT_USER.replace(/'/g, "\\'")}' order by Col1 desc`;
-  const gvizUrl =
-    `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq` +
-    `?sheet=${encodeURIComponent(SHEET_NAME)}&tqx=out:json&tq=${encodeURIComponent(tq)}`;
+  const user = CURRENT_USER;
+  if (!user) { historyStatus.textContent = 'Not signed in'; return; }
 
+  // 1) Try gviz (no sheet param → first tab)
   try {
-    const resp = await fetch(gvizUrl, { cache: 'no-store' });
-    const text = await resp.text();
-
-    if (!resp.ok) {
-      historyStatus.textContent = `HTTP ${resp.status} loading history`;
-      console.error('gviz HTTP error:', resp.status, text.slice(0, 300));
+    const rows = await fetchFromGviz({ useSheetParam: false, user });
+    if (rows) {
+      render(rows);
       return;
     }
+  } catch (e) {
+    console.warn('gviz (no sheet) failed:', e);
+  }
 
-    // Unwrap gviz wrapper: google.visualization.Query.setResponse({...});
-    const start = text.indexOf('{');
-    const end = text.lastIndexOf('}');
-    if (start === -1 || end === -1) {
-      historyStatus.innerHTML = `Unexpected response. Is the sheet <b>Published to the web</b>?`;
-      console.error('Unexpected gviz payload:', text.slice(0, 300));
+  // 2) Try gviz with explicit sheet name (must match tab label exactly)
+  try {
+    const rows = await fetchFromGviz({ useSheetParam: true, sheetName: SHEET_NAME, user });
+    if (rows) {
+      render(rows);
       return;
     }
-    const data = JSON.parse(text.slice(start, end + 1));
+  } catch (e) {
+    console.warn('gviz (with sheet) failed:', e);
+  }
 
-    if (data.status && data.status !== 'ok') {
-      historyStatus.textContent = `Query error from Google Sheets`;
-      console.error('gviz status:', data.status, data.errors || data);
-      return;
-    }
+  // 3) Fallback: CSV export (no SQL, we filter client-side)
+  try {
+    const rows = await fetchFromCsv({ user });
+    render(rows);
+    return;
+  } catch (e) {
+    console.error('CSV fallback failed:', e);
+    historyStatus.textContent = 'Error loading history';
+  }
 
-    const rows = Array.isArray(data.table?.rows) ? data.table.rows : [];
+  // ---- helpers ----
+  function render(rows) {
     const headers = [
       'Submission Date','Expense Date','Name','Category','Item',
       'Receipt No.','Expense Amount','Expense Currency','Expense in SGD','Remarks'
     ];
-
-    // Map to plain values; keep formatted dates in first two columns when provided
-    const normalized = rows.map(r =>
-      (r.c || []).map((cell, idx) => {
-        if (!cell) return '';
-        if (idx <= 1 && cell.f) return cell.f; // formatted date
-        return cell.f ?? cell.v ?? '';
-      })
-    );
-
-    renderHistoryTable(headers, normalized);
+    renderHistoryTable(headers, rows);
     historyStatus.textContent =
-      `${normalized.length} entr${normalized.length === 1 ? 'y' : 'ies'} found`;
-  } catch (err) {
-    historyStatus.textContent = 'Error loading history';
-    console.error('History (gviz) failed:', err);
+      `${rows.length} entr${rows.length === 1 ? 'y' : 'ies'} found`;
   }
+}
+
+/** gviz fetch with/without sheet param. Returns normalized rows[] or null if query error */
+async function fetchFromGviz({ useSheetParam, sheetName, user }) {
+  // SQL-like query: filter by Name (Col3) and sort by Submission Date (Col1) desc
+  const tq = `select * where Col3='${user.replace(/'/g, "\\'")}' order by Col1 desc`;
+
+  const base = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq`;
+  const params = new URLSearchParams();
+  if (useSheetParam && sheetName) params.set('sheet', sheetName);
+  params.set('tqx', 'out:json');
+  params.set('tq', tq);
+
+  const url = `${base}?${params.toString()}`;
+  const resp = await fetch(url, { cache: 'no-store' });
+  const text = await resp.text();
+
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${text.slice(0,150)}`);
+
+  // Unwrap setResponse(...)
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start === -1 || end === -1) throw new Error('Unexpected gviz payload (no JSON)');
+
+  const data = JSON.parse(text.slice(start, end + 1));
+  if (data.status && data.status !== 'ok') {
+    // Return null (so caller tries next fallback), but log the exact error
+    console.warn('gviz status:', data.status, data.errors || data);
+    return null;
+  }
+
+  // Normalize rows
+  const rows = Array.isArray(data.table?.rows) ? data.table.rows : [];
+  return rows.map(r =>
+    (r.c || []).map((cell, idx) => {
+      if (!cell) return '';
+      // Keep formatted date for first two columns if present
+      if (idx <= 1 && cell.f) return cell.f;
+      return cell.f ?? cell.v ?? '';
+    })
+  );
+}
+
+/** CSV export fallback (requires publish or link sharing); filters client-side */
+async function fetchFromCsv({ user }) {
+  // If your history lives on the first tab, gid=0 will usually work. If needed, put your actual gid in config.
+  const gid = '0';
+  const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv&gid=${gid}`;
+
+  const resp = await fetch(url, { cache: 'no-store' });
+  if (!resp.ok) throw new Error(`CSV HTTP ${resp.status}`);
+  const csvText = await resp.text();
+
+  // Parse CSV → rows (very small, so a simple parser is fine)
+  const rows = parseCsv(csvText);
+  if (!rows.length) return [];
+
+  // First row is headers; we assume your header order matches the app.
+  const header = rows[0];
+  const dataRows = rows.slice(1);
+
+  // Find "Name" column index (fallback to 2 = third col if not found)
+  const nameIdx = header.findIndex(h => String(h).trim().toLowerCase() === 'name');
+  const idx = nameIdx >= 0 ? nameIdx : 2;
+
+  // Filter rows for this user
+  const mine = dataRows.filter(r => (r[idx] || '').trim() === user);
+
+  return mine;
+}
+
+/** Tiny CSV parser (handles quotes and commas) */
+function parseCsv(text) {
+  const rows = [];
+  let row = [], cur = '', inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i], next = text[i+1];
+    if (inQuotes) {
+      if (ch === '"' && next === '"') { cur += '"'; i++; }
+      else if (ch === '"') { inQuotes = false; }
+      else { cur += ch; }
+    } else {
+      if (ch === '"') { inQuotes = true; }
+      else if (ch === ',') { row.push(cur); cur = ''; }
+      else if (ch === '\n') { row.push(cur); rows.push(row); row = []; cur = ''; }
+      else if (ch === '\r') { /* ignore */ }
+      else { cur += ch; }
+    }
+  }
+  if (cur.length || row.length) { row.push(cur); rows.push(row); }
+  return rows;
 }
 
 // Small helper to unwrap the gviz JS response into JSON
