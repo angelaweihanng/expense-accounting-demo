@@ -8,6 +8,8 @@ const USERS = {
   test_user_4: "test_password_4",
 };
 
+let CURRENT_USER = null;
+
 document.querySelector('#app').innerHTML = `
   <div class="card">
     <div class="header">
@@ -16,7 +18,11 @@ document.querySelector('#app').innerHTML = `
         <h1>Expense Account Demo</h1>
         <p class="kicker">Submit and log expenses to Google Sheets</p>
       </div>
-      <div style="margin-left:auto" id="userBadge" class="badge hidden"></div>
+      <div style="margin-left:auto; display:flex; gap:8px; align-items:center;">
+        <button id="historyBtn" style="background:#0d1726;border:1px solid #1f2a3a;color:#e6edf3;padding:8px 12px;border-radius:10px;cursor:pointer">Previous Submissions</button>
+        <button id="newBtn" class="hidden" style="background:#0d1726;border:1px solid #1f2a3a;color:#e6edf3;padding:8px 12px;border-radius:10px;cursor:pointer">New Submission</button>
+        <div id="userBadge" class="badge hidden"></div>
+      </div>
     </div>
 
     <div class="content" id="authView">
@@ -55,6 +61,17 @@ document.querySelector('#app').innerHTML = `
       </form>
     </div>
 
+    <div class="content hidden" id="historyView">
+      <h2 style="margin-top:0">Previous Submissions</h2>
+      <div id="historyStatus" class="kicker" style="margin-bottom:8px">Loading…</div>
+      <div style="overflow:auto;border:1px solid #243040;border-radius:12px;">
+        <table id="historyTable" style="width:100%;border-collapse:collapse;color:#e6edf3">
+          <thead></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
     <div class="footer"><div>Expense Account Demo</div><div>© <span id="y"></span></div></div>
   </div>
 `;
@@ -65,10 +82,13 @@ document.getElementById('y').textContent = new Date().getFullYear().toString();
 // Elements
 const authView = document.getElementById('authView');
 const formView = document.getElementById('formView');
+const historyView = document.getElementById('historyView');
 const loginBtn = document.getElementById('loginBtn');
 const usernameEl = document.getElementById('username');
 const passwordEl = document.getElementById('password');
 const userBadge  = document.getElementById('userBadge');
+const historyBtn = document.getElementById('historyBtn');
+const newBtn     = document.getElementById('newBtn');
 
 const form            = document.getElementById('expenseForm');
 const submissionDate  = document.getElementById('submissionDate');
@@ -82,6 +102,8 @@ const currencyEl      = document.getElementById('currency');
 const amountSGDEl     = document.getElementById('amountSGD');
 const remarksEl       = document.getElementById('remarks');
 const rateInfo        = document.getElementById('rateInfo').querySelector('span');
+const historyStatus   = document.getElementById('historyStatus');
+const historyTable    = document.getElementById('historyTable');
 
 // Default dates = today
 const today = new Date().toISOString().slice(0, 10);
@@ -159,11 +181,15 @@ currencyEl.addEventListener('change', computeSGD);
 
 // Auth
 function showForm(user) {
+  CURRENT_USER = user;
   nameEl.value = user;
   userBadge.textContent = user;
   userBadge.classList.remove('hidden');
   authView.classList.add('hidden');
+  historyView.classList.add('hidden');
   formView.classList.remove('hidden');
+  newBtn.classList.add('hidden');
+  historyBtn.classList.remove('hidden');
 }
 loginBtn.addEventListener('click', () => {
   const u = usernameEl.value.trim();
@@ -193,25 +219,21 @@ form.addEventListener('submit', async (e) => {
   };
   const url = `https://script.google.com/macros/s/${GAS_ENDPOINT}/exec`;
 
-  // 1) Try sendBeacon (no CORS, fire-and-forget)
   const beaconOk = navigator.sendBeacon(
     url,
     new Blob([new URLSearchParams({ payload: JSON.stringify(payload) })], { type: 'text/plain;charset=UTF-8' })
   );
 
   if (!beaconOk) {
-    // 2) Fallback: fetch with no-cors and URL-encoded body (we won't read the response)
     try {
       const body = new URLSearchParams({ payload: JSON.stringify(payload) });
       await fetch(url, { method: 'POST', mode: 'no-cors', body });
-      // If this resolves, request left the browser; assume success.
-    } catch (err) {
+    } catch {
       alert('Network error sending request.');
       return;
     }
   }
 
-  // UX: treat as success (Sheet update will complete server-side)
   alert('Submitted!');
   form.reset();
   submissionDate.value = new Date().toISOString().slice(0,10);
@@ -219,3 +241,70 @@ form.addEventListener('submit', async (e) => {
   currencyEl.value = 'SGD';
   computeSGD();
 });
+
+// ---------- History view ----------
+historyBtn.addEventListener('click', async () => {
+  if (!CURRENT_USER) { alert('Please sign in first.'); return; }
+  formView.classList.add('hidden');
+  historyView.classList.remove('hidden');
+  historyBtn.classList.add('hidden');
+  newBtn.classList.remove('hidden');
+  await loadHistory();
+});
+
+newBtn.addEventListener('click', () => {
+  historyView.classList.add('hidden');
+  formView.classList.remove('hidden');
+  newBtn.classList.add('hidden');
+  historyBtn.classList.remove('hidden');
+});
+
+async function loadHistory() {
+  historyStatus.textContent = 'Loading…';
+  const url = `https://script.google.com/macros/s/${GAS_ENDPOINT}/exec` +
+    `?action=history&sheetId=${encodeURIComponent(SHEET_ID)}&name=${encodeURIComponent(CURRENT_USER)}`;
+
+  try {
+    const res = await fetch(url); // GET with JSON response; server sends CORS headers
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'Failed to load history');
+    renderHistoryTable(data.headers, data.rows);
+    historyStatus.textContent = `${data.rows.length} entr${data.rows.length === 1 ? 'y' : 'ies'} found`;
+  } catch (err) {
+    historyStatus.textContent = 'Error loading history';
+    console.error(err);
+  }
+}
+
+function renderHistoryTable(headers, rows) {
+  const thead = historyTable.querySelector('thead');
+  const tbody = historyTable.querySelector('tbody');
+  thead.innerHTML = '';
+  tbody.innerHTML = '';
+
+  // header row
+  const trh = document.createElement('tr');
+  headers.forEach(h => {
+    const th = document.createElement('th');
+    th.textContent = h;
+    th.style.textAlign = 'left';
+    th.style.padding = '10px';
+    th.style.borderBottom = '1px solid #243040';
+    trh.appendChild(th);
+  });
+  thead.appendChild(trh);
+
+  // rows
+  rows.forEach(r => {
+    const tr = document.createElement('tr');
+    r.forEach((cell, idx) => {
+      const td = document.createElement('td');
+      td.textContent = cell == null ? '' : String(cell);
+      td.style.padding = '10px';
+      td.style.borderBottom = '1px solid #1c2533';
+      td.style.whiteSpace = idx === headers.indexOf('Remarks') ? 'normal' : 'nowrap';
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+}
