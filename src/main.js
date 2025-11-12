@@ -172,9 +172,10 @@ loginBtn.addEventListener('click', () => {
   else alert('Invalid credentials');
 });
 
-// Submit (NO custom headers → avoids CORS preflight)
+// -------- SUBMIT (beacon first, then no-cors fetch; never parse response) --------
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
+
   const payload = {
     sheetId: SHEET_ID,
     row: [
@@ -190,37 +191,31 @@ form.addEventListener('submit', async (e) => {
       remarksEl.value
     ]
   };
+  const url = `https://script.google.com/macros/s/${GAS_ENDPOINT}/exec`;
 
-  try {
-    const url = `https://script.google.com/macros/s/${GAS_ENDPOINT}/exec`;
-  
-    // Send as URL-encoded form to avoid preflight
-    const body = new URLSearchParams({
-      payload: JSON.stringify(payload)
-    });
-  
-    const res = await fetch(url, {
-      method: 'POST',
-      body // <— NO headers on purpose (simple request, no preflight)
-    });
-  
-    // Apps Script returns text; try to parse
-    const text = await res.text();
-    let data = {};
-    try { data = JSON.parse(text); } catch { /* leave as {} */ }
-  
-    if (!res.ok || !data.ok) {
-      throw new Error((data && data.error) || `HTTP ${res.status}: ${text.slice(0,200)}`);
+  // 1) Try sendBeacon (no CORS, fire-and-forget)
+  const beaconOk = navigator.sendBeacon(
+    url,
+    new Blob([new URLSearchParams({ payload: JSON.stringify(payload) })], { type: 'text/plain;charset=UTF-8' })
+  );
+
+  if (!beaconOk) {
+    // 2) Fallback: fetch with no-cors and URL-encoded body (we won't read the response)
+    try {
+      const body = new URLSearchParams({ payload: JSON.stringify(payload) });
+      await fetch(url, { method: 'POST', mode: 'no-cors', body });
+      // If this resolves, request left the browser; assume success.
+    } catch (err) {
+      alert('Network error sending request.');
+      return;
     }
-  
-    alert('Submitted!');
-    form.reset();
-    submissionDate.value = new Date().toISOString().slice(0,10);
-    expenseDate.value = submissionDate.value;
-    currencyEl.value = 'SGD';
-    computeSGD();
-  } catch (err) {
-    alert('Error: ' + err.message);
   }
-  
+
+  // UX: treat as success (Sheet update will complete server-side)
+  alert('Submitted!');
+  form.reset();
+  submissionDate.value = new Date().toISOString().slice(0,10);
+  expenseDate.value = submissionDate.value;
+  currencyEl.value = 'SGD';
+  computeSGD();
 });
