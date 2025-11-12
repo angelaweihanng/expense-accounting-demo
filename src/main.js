@@ -262,29 +262,41 @@ newBtn.addEventListener('click', () => {
 async function loadHistory() {
   historyStatus.textContent = 'Loading…';
 
-  // Build gviz query: select all where Name (Col3) = CURRENT_USER, newest first by Submission Date (Col1)
+  // If you’re using gviz:
   const tq = `select * where Col3='${CURRENT_USER.replace(/'/g, "\\'")}' order by Col1 desc`;
   const gvizUrl =
     `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq` +
     `?sheet=${encodeURIComponent(SHEET_NAME)}&tqx=out:json&tq=${encodeURIComponent(tq)}`;
 
-  try {
-    const text = await (await fetch(gvizUrl, { cache: 'no-store' })).text();
+  const url = gvizUrl; // or your Netlify proxy URL if you adopted that approach
 
-    // gviz wraps JSON like: google.visualization.Query.setResponse({...});
-    const json = parseGviz(text);
+  try {
+    const res = await fetch(url, { cache: 'no-store' });
+
+    if (res.status === 407) {
+      historyStatus.innerHTML = `Blocked by your network proxy (HTTP 407). 
+        <br/>Please sign in to the proxy or switch networks and reload.`;
+      return;
+    }
+    if (!res.ok) {
+      historyStatus.textContent = `HTTP ${res.status} loading history`;
+      return;
+    }
+
+    const text = await res.text();
+    // gviz wrapper → JSON
+    const start = text.indexOf('{'), end = text.lastIndexOf('}');
+    if (start === -1 || end === -1) throw new Error('Unexpected response');
+    const data = JSON.parse(text.slice(start, end + 1));
 
     const headers = [
       'Submission Date','Expense Date','Name','Category','Item',
       'Receipt No.','Expense Amount','Expense Currency','Expense in SGD','Remarks'
     ];
-
-    const rows = (json.table.rows || []).map(r =>
+    const rows = (data.table.rows || []).map(r =>
       (r.c || []).map((cell, idx) => {
         if (!cell) return '';
-        // Date cells sometimes come as Date objects (gviz serial). Normalise to yyyy-mm-dd for first two cols
-        if (idx <= 1 && cell.f) return cell.f;        // formatted date if present
-        if (idx <= 1 && cell.v && typeof cell.v === 'string') return cell.v;
+        if (idx <= 1 && cell.f) return cell.f;
         return cell.f ?? cell.v ?? '';
       })
     );
@@ -292,10 +304,11 @@ async function loadHistory() {
     renderHistoryTable(headers, rows);
     historyStatus.textContent = `${rows.length} entr${rows.length === 1 ? 'y' : 'ies'} found`;
   } catch (err) {
-    console.error('History (gviz) failed:', err);
-    historyStatus.textContent = 'Error loading history';
+    historyStatus.textContent = 'Error loading history (network/proxy?)';
+    console.error(err);
   }
 }
+
 
 // Small helper to unwrap the gviz JS response into JSON
 function parseGviz(txt) {
