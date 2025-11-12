@@ -1,5 +1,5 @@
 import './styles.css';
-import { SHEET_ID, GAS_ENDPOINT } from './config.js';
+import { SHEET_ID, GAS_ENDPOINT, SHEET_NAME } from './config.js';
 
 const USERS = {
   test_user_1: "test_password_1",
@@ -261,22 +261,48 @@ newBtn.addEventListener('click', () => {
 
 async function loadHistory() {
   historyStatus.textContent = 'Loading…';
-  const target = `https://script.google.com/macros/s/${GAS_ENDPOINT}/exec` +
-    `?action=history&sheetId=${encodeURIComponent(SHEET_ID)}&name=${encodeURIComponent(CURRENT_USER)}`;
 
-  // Proxy through Netlify to bypass CORS
-  const proxyUrl = `/.netlify/functions/proxy?url=${encodeURIComponent(target)}`;
+  // Build gviz query: select all where Name (Col3) = CURRENT_USER, newest first by Submission Date (Col1)
+  const tq = `select * where Col3='${CURRENT_USER.replace(/'/g, "\\'")}' order by Col1 desc`;
+  const gvizUrl =
+    `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq` +
+    `?sheet=${encodeURIComponent(SHEET_NAME)}&tqx=out:json&tq=${encodeURIComponent(tq)}`;
 
   try {
-    const res = await fetch(proxyUrl);
-    const data = await res.json();
-    if (!data.ok) throw new Error(data.error || 'Failed to load history');
-    renderHistoryTable(data.headers, data.rows);
-    historyStatus.textContent = `${data.rows.length} entr${data.rows.length === 1 ? 'y' : 'ies'} found`;
+    const text = await (await fetch(gvizUrl, { cache: 'no-store' })).text();
+
+    // gviz wraps JSON like: google.visualization.Query.setResponse({...});
+    const json = parseGviz(text);
+
+    const headers = [
+      'Submission Date','Expense Date','Name','Category','Item',
+      'Receipt No.','Expense Amount','Expense Currency','Expense in SGD','Remarks'
+    ];
+
+    const rows = (json.table.rows || []).map(r =>
+      (r.c || []).map((cell, idx) => {
+        if (!cell) return '';
+        // Date cells sometimes come as Date objects (gviz serial). Normalise to yyyy-mm-dd for first two cols
+        if (idx <= 1 && cell.f) return cell.f;        // formatted date if present
+        if (idx <= 1 && cell.v && typeof cell.v === 'string') return cell.v;
+        return cell.f ?? cell.v ?? '';
+      })
+    );
+
+    renderHistoryTable(headers, rows);
+    historyStatus.textContent = `${rows.length} entr${rows.length === 1 ? 'y' : 'ies'} found`;
   } catch (err) {
+    console.error('History (gviz) failed:', err);
     historyStatus.textContent = 'Error loading history';
-    console.error(err);
   }
+}
+
+// Small helper to unwrap the gviz JS response into JSON
+function parseGviz(txt) {
+  const start = txt.indexOf('{');
+  const end = txt.lastIndexOf('}');
+  if (start === -1 || end === -1) throw new Error('Unexpected gviz payload');
+  return JSON.parse(txt.slice(start, end + 1));
 }
 
 
