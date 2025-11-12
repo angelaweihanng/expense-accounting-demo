@@ -262,7 +262,7 @@ newBtn.addEventListener('click', () => {
 async function loadHistory() {
   historyStatus.textContent = 'Loading…';
 
-  // Build gviz query: filter by Name (Col3) and order by Submission Date (Col1) desc
+  // SQL-like query: filter by Name (Col3) and sort by Submission Date (Col1) desc
   const tq = `select * where Col3='${CURRENT_USER.replace(/'/g, "\\'")}' order by Col1 desc`;
   const gvizUrl =
     `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq` +
@@ -272,45 +272,39 @@ async function loadHistory() {
     const resp = await fetch(gvizUrl, { cache: 'no-store' });
     const text = await resp.text();
 
-    // If request failed, show HTTP status
     if (!resp.ok) {
-      console.error('gviz HTTP error:', resp.status, text.slice(0, 500));
-      historyStatus.textContent =
-        `HTTP ${resp.status} loading history. Is the sheet Published to the web?`;
+      historyStatus.textContent = `HTTP ${resp.status} loading history`;
+      console.error('gviz HTTP error:', resp.status, text.slice(0, 300));
       return;
     }
 
-    // gviz wraps the JSON: google.visualization.Query.setResponse({...});
+    // Unwrap gviz wrapper: google.visualization.Query.setResponse({...});
     const start = text.indexOf('{');
     const end = text.lastIndexOf('}');
     if (start === -1 || end === -1) {
-      console.error('Unexpected gviz payload (no JSON braces):', text.slice(0, 200));
-      historyStatus.innerHTML =
-        `Unexpected response from Google Sheets.<br/>Make sure the sheet is <b>Published to the web</b> and SHEET_NAME is correct.`;
+      historyStatus.innerHTML = `Unexpected response. Is the sheet <b>Published to the web</b>?`;
+      console.error('Unexpected gviz payload:', text.slice(0, 300));
       return;
     }
     const data = JSON.parse(text.slice(start, end + 1));
 
-    // gviz error message?
     if (data.status && data.status !== 'ok') {
+      historyStatus.textContent = `Query error from Google Sheets`;
       console.error('gviz status:', data.status, data.errors || data);
-      historyStatus.innerHTML =
-        `Query error from Google Sheets: <code>${data.status}</code>.<br/>Check SHEET_NAME and Publish-to-web settings.`;
       return;
     }
 
-    const table = data.table || {};
-    const rows = Array.isArray(table.rows) ? table.rows : [];
+    const rows = Array.isArray(data.table?.rows) ? data.table.rows : [];
     const headers = [
       'Submission Date','Expense Date','Name','Category','Item',
       'Receipt No.','Expense Amount','Expense Currency','Expense in SGD','Remarks'
     ];
 
-    // Map rows to plain values; keep formatted dates in first two columns when available
+    // Map to plain values; keep formatted dates in first two columns when provided
     const normalized = rows.map(r =>
       (r.c || []).map((cell, idx) => {
         if (!cell) return '';
-        if (idx <= 1 && cell.f) return cell.f; // use formatted date if provided
+        if (idx <= 1 && cell.f) return cell.f; // formatted date
         return cell.f ?? cell.v ?? '';
       })
     );
@@ -319,12 +313,10 @@ async function loadHistory() {
     historyStatus.textContent =
       `${normalized.length} entr${normalized.length === 1 ? 'y' : 'ies'} found`;
   } catch (err) {
+    historyStatus.textContent = 'Error loading history';
     console.error('History (gviz) failed:', err);
-    historyStatus.textContent =
-      'Error loading history. Check network / proxy, and that the sheet is Published to web.';
   }
 }
-
 
 // Small helper to unwrap the gviz JS response into JSON
 function parseGviz(txt) {
